@@ -1,20 +1,14 @@
 import React, { useState, useRef } from "react";
-import { X, Calendar, User, Phone, DollarSign, BookOpen, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { X, Calendar, User, Phone, DollarSign, BookOpen, CheckCircle2, AlertCircle, Loader2, GraduationCap } from "lucide-react";
+import { CLASS_CATALOGUE } from "../utils/constants";
 
-export default function AddStudentModal({
-  student,
-  selectedClass,
-  calculateEndDate,
-  onAdd,
-  onUpdate,
-  onClose
-}) {
+export default function AddStudentModal({ student, selectedClass, calculateEndDate, onAdd, onUpdate, onClose }) {
   const isEditMode = !!student;
   const modalRef = useRef(null);
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState({});
 
-  // Fix: Initialize state dynamically directly inside useState to prevent cascading useEffect updates
+  // Lazy initialization prevents unnecessary re-renders when calculating dates
   const [formData, setFormData] = useState(() => {
     if (isEditMode && student) {
       return {
@@ -32,20 +26,19 @@ export default function AddStudentModal({
       const defaultStart = new Date().toISOString().split("T")[0];
       const autoEnd = calculateEndDate ? calculateEndDate(defaultStart) : "";
       return {
-        name: "",
-        phone: "",
-        class_key: selectedClass,
-        start_date: defaultStart,
+        name: "", 
+        phone: "", 
+        class_key: selectedClass, // Defaults to the active tab, but can now be changed
+        start_date: defaultStart, 
         end_date: autoEnd,
-        school_fee: "",
-        book_fee: "",
-        tuition_paid: false,
+        school_fee: "", 
+        book_fee: "", 
+        tuition_paid: false, 
         book_paid: false
       };
     }
   });
 
-  // Since state is set at initialization, we track manual date overrides natively 
   const [isDateOverridden, setIsDateOverridden] = useState(isEditMode);
 
   const handleStartDateChange = (e) => {
@@ -73,7 +66,6 @@ export default function AddStudentModal({
     if (!formData.end_date) errs.end_date = "End target date is required";
     if (!formData.school_fee || Number(formData.school_fee) < 0) errs.school_fee = "Enter valid tuition rate";
     if (formData.book_fee !== "" && Number(formData.book_fee) < 0) errs.book_fee = "Fee cannot be negative";
-    
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -90,11 +82,8 @@ export default function AddStudentModal({
         book_fee: formData.book_fee ? Number(formData.book_fee) : 0
       };
 
-      if (isEditMode) {
-        await onUpdate(student.id, cleanPayload);
-      } else {
-        await onAdd(cleanPayload);
-      }
+      if (isEditMode) await onUpdate(student.id, cleanPayload);
+      else await onAdd(cleanPayload);
       onClose();
     } catch (err) {
       console.error(err);
@@ -106,7 +95,6 @@ export default function AddStudentModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
       <div ref={modalRef} className="bg-white rounded-2xl w-full max-w-lg shadow-2xl border border-slate-100 flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200">
-        
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div>
             <h2 className="text-base font-bold text-slate-900">{isEditMode ? "Modify Student Profile" : "Enroll New Student"}</h2>
@@ -127,11 +115,36 @@ export default function AddStudentModal({
             {errors.name && <p className="text-xs text-rose-600 font-medium mt-1 flex items-center gap-1"><AlertCircle size={12}/>{errors.name}</p>}
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-1.5">Phone Contact</label>
-            <div className="relative">
-              <Phone size={16} className="absolute left-3 top-3.5 text-slate-400" />
-              <input type="tel" value={formData.phone} onChange={e => setFormData(p=>({...p, phone: e.target.value}))} placeholder="09-xxxxxxxxx" className="w-full pl-9 pr-4 py-2.5 border border-slate-200 focus:border-emerald-500 rounded-xl text-sm font-medium focus:outline-none" />
+          {/* NEW: 2-Column Grid for Phone & Class Assignment */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-1.5">Phone Contact</label>
+              <div className="relative">
+                <Phone size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                <input type="tel" value={formData.phone} onChange={e => setFormData(p=>({...p, phone: e.target.value}))} placeholder="09-xxxxxxxxx" className="w-full pl-9 pr-4 py-2.5 border border-slate-200 focus:border-emerald-500 rounded-xl text-sm font-medium focus:outline-none" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-500 tracking-wider mb-1.5">Class Assignment *</label>
+              <div className="relative">
+                <GraduationCap size={16} className="absolute left-3 top-3.5 text-slate-400 z-10" />
+                <select 
+                  value={formData.class_key} 
+                  onChange={e => setFormData(p => ({...p, class_key: e.target.value}))}
+                  className="w-full pl-9 pr-4 py-2.5 border border-slate-200 focus:border-emerald-500 rounded-xl text-sm font-semibold focus:outline-none appearance-none bg-white relative"
+                >
+                  {CLASS_CATALOGUE.map(cls => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}
+                    </option>
+                  ))}
+                </select>
+                {/* Custom dropdown arrow to replace the native browser one hidden by appearance-none */}
+                <div className="absolute right-3 top-4 pointer-events-none text-slate-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -199,7 +212,6 @@ export default function AddStudentModal({
             {isEditMode ? "Save Changes" : "Confirm Enrollment"}
           </button>
         </div>
-
       </div>
     </div>
   );
