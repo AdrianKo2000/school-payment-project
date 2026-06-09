@@ -9,7 +9,6 @@ import ConfirmModal from "./components/ConfirmModal";
 import { Users, History, CloudLightning, Download, UserPlus, ChevronDown, Trash2 } from "lucide-react";
 import Skeleton from "./components/Skeleton";
 
-
 const calculateEndDate = (startDateStr) => {
   if (!startDateStr) return "";
   let d = new Date(startDateStr + "T12:00:00");
@@ -29,7 +28,6 @@ export default function App() {
   // State Management with Persistence
   const [currentView, setCurrentView] = useState(() => localStorage.getItem("academy_active_view_tab") || "tracking");
   
-  // FIXED HERE: Added lazy initialization from localStorage for the active class tab
   const [selectedClass, setSelectedClass] = useState(() => {
     return localStorage.getItem("academy_active_class_tab") || "beginner-1";
   });
@@ -49,18 +47,12 @@ export default function App() {
     isOpen: false, title: "", message: "", onConfirm: () => {},
   });
 
-  
-
   const showToast = useCallback((message, type = "success") => setToast({ message, type }), []);
   const dismissToast = useCallback(() => setToast(null), []);
 
   // Sync state modifications out to localStorage
   useEffect(() => localStorage.setItem("academy_active_view_tab", currentView), [currentView]);
-  
-  // FIXED HERE: Added effect hook to save the selected class to localStorage when altered
-  useEffect(() => {
-    localStorage.setItem("academy_active_class_tab", selectedClass);
-  }, [selectedClass]);
+  useEffect(() => localStorage.setItem("academy_active_class_tab", selectedClass), [selectedClass]);
 
   // Database Handlers
   const loadDatabase = useCallback(async () => {
@@ -98,30 +90,42 @@ export default function App() {
     }
   }, [syncing, showToast]);
 
-  const handleAddStudent = async (formData) => {
+  // --- NEW: Centralized Execution Wrapper ---
+  const executeWithSync = async (dbOperation, successMessage) => {
     try {
-      await syncService.addStudent({ 
-        tuition_paid: false, 
-        book_paid: false,
-        ...formData 
-      });
-      showToast("Student profile logged successfully!");
-      await loadDatabase();
-      setTimeout(() => triggerSync(), 100);
+      // 1. Execute local DB operation
+      await dbOperation(); 
+      
+      if (successMessage) showToast(successMessage);
+      
+      // 2. Refresh local state so UI updates instantly
+      await loadDatabase(); 
+      
+      // 3. Sync with cloud (no race-condition timeouts)
+      await triggerSync();  
     } catch (err) {
-      showToast("Could not save student", "error");
+      console.error("Operation failed:", err);
+      showToast("An error occurred during the operation.", "error");
     }
   };
 
-  const handleUpdateStudent = async (id, changes) => {
-    try {
-      await syncService.updateStudent(id, changes);
-      showToast("Student profile updated");
-      await loadDatabase();
-      setTimeout(() => triggerSync(), 100);
-    } catch (err) {
-      showToast("Update rejected", "error");
-    }
+  // --- REFACTORED HANDLERS ---
+  const handleAddStudent = (formData) => {
+    executeWithSync(
+      () => syncService.addStudent({ 
+        tuition_paid: false, 
+        book_paid: false,
+        ...formData 
+      }),
+      "Student profile logged successfully!"
+    );
+  };
+
+  const handleUpdateStudent = (id, changes) => {
+    executeWithSync(
+      () => syncService.updateStudent(id, changes),
+      "Student profile updated"
+    );
   };
 
   const handleDeleteStudent = (student) => {
@@ -129,12 +133,10 @@ export default function App() {
       isOpen: true,
       title: "Remove Student Enrollment",
       message: `Permanently remove ${student.name}? This will cascade to the cloud mirror.`,
-      onConfirm: async () => {
-        await syncService.deleteStudent(student.id);
-        showToast(`Removed student profile: ${student.name}`);
-        await loadDatabase();
-        setTimeout(() => triggerSync(), 100);
-      },
+      onConfirm: () => executeWithSync(
+        () => syncService.deleteStudent(student.id),
+        `Removed student profile: ${student.name}`
+      ),
     });
   };
 
@@ -143,12 +145,10 @@ export default function App() {
       isOpen: true,
       title: "Delete History Entry",
       message: `Permanently remove payment log for ${record.student_name}?`,
-      onConfirm: async () => {
-        await syncService.deletePaymentHistoryRow(record.id);
-        showToast("Payment record scheduled for deletion");
-        await loadDatabase();
-        setTimeout(() => triggerSync(), 100);
-      },
+      onConfirm: () => executeWithSync(
+        () => syncService.deletePaymentHistoryRow(record.id),
+        "Payment record scheduled for deletion"
+      ),
     });
   };
 
@@ -158,17 +158,15 @@ export default function App() {
       title: "CRITICAL: Database Purge Sequence",
       message: "WARNING: This will permanently wipe out ALL payment history ledger records globally. Proceed?",
       isDanger: true,
-      onConfirm: async () => {
-        await syncService.clearAllPaymentHistory();
-        showToast("History records wiped");
-        await loadDatabase();
-        setTimeout(() => triggerSync(), 100);
-      },
+      onConfirm: () => executeWithSync(
+        () => syncService.clearAllPaymentHistory(),
+        "History records wiped"
+      ),
     });
   };
 
-  const completeFullPaymentCycle = async (student) => {
-    try {
+  const completeFullPaymentCycle = (student) => {
+    executeWithSync(async () => {
       await syncService.archivePayment({ 
         ...student, 
         archived_at: new Date().toISOString() 
@@ -189,38 +187,28 @@ export default function App() {
       });
 
       await syncService.updateStudent(student.id, { tuition_paid: true, book_paid: true });
-      showToast(`Cycle complete! New month created.`);
-      await loadDatabase();
-      
-      setTimeout(() => {
-        triggerSync();
-      }, 150);
-
-    } catch (err) {
-      console.error(err);
-      showToast("Payment cycle processing failed", "error");
-    }
+    }, `Cycle complete! New month created.`);
   };
 
-  const handlePayTuition = async (student) => {
+  const handlePayTuition = (student) => {
     if (student.book_paid || Number(student.book_fee || 0) === 0) {
-      await completeFullPaymentCycle(student);
+      completeFullPaymentCycle(student);
     } else {
-      await syncService.updateStudent(student.id, { tuition_paid: true });
-      showToast(`Tuition cleared for ${student.name}. Book fee outstanding.`);
-      await loadDatabase();
-      setTimeout(() => triggerSync(), 100);
+      executeWithSync(
+        () => syncService.updateStudent(student.id, { tuition_paid: true }),
+        `Tuition cleared for ${student.name}. Book fee outstanding.`
+      );
     }
   };
 
-  const handlePayBook = async (student) => {
+  const handlePayBook = (student) => {
     if (student.tuition_paid) {
-      await completeFullPaymentCycle(student);
+      completeFullPaymentCycle(student);
     } else {
-      await syncService.updateStudent(student.id, { book_paid: true });
-      showToast(`Book fee cleared for ${student.name}. Tuition outstanding.`);
-      await loadDatabase();
-      setTimeout(() => triggerSync(), 100);
+      executeWithSync(
+        () => syncService.updateStudent(student.id, { book_paid: true }),
+        `Book fee cleared for ${student.name}. Tuition outstanding.`
+      );
     }
   };
 

@@ -5,13 +5,25 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-// 1. Supabase Initialization (Environment Safe)
-const SUPABASE_URL = import.meta.env?.VITE_SUPABASE_URL || "https://lwwuwghfwsrmoeozryap.supabase.co";
-const SUPABASE_ANON_KEY = import.meta.env?.VITE_SUPABASE_ANON_KEY || "sb_publishable_7rWSy_wnnj_yx12l2MHS5w__UoF7bb-";
+// 1. Supabase Initialization (Environment Safe - Hardcoded credentials removed)
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false },
-});
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.warn(
+    "⚠️ Supabase credentials are missing! Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file. Cloud sync will fail until these are configured."
+  );
+}
+
+// Dummy fallbacks are provided to prevent createClient from throwing a fatal error on app load
+// if the .env file is temporarily missing. The local IndexedDB will still function normally.
+export const supabase = createClient(
+  SUPABASE_URL || "https://YOUR_PROJECT.supabase.co", 
+  SUPABASE_ANON_KEY || "YOUR_ANON_KEY", 
+  {
+    auth: { persistSession: false },
+  }
+);
 
 // 2. IndexedDB Configuration
 const DB_NAME = "school_payment_tracker";
@@ -126,7 +138,7 @@ export async function archivePayment(historyData) {
     deleted: false,
     ...historyData,
     student_id: historyData.id, 
-    student_name: historyData.name, // The exact fix for Supabase constraint
+    student_name: historyData.name,
     id: generateUUID(),
     archived_at: new Date().toISOString(),
     last_updated: new Date().toISOString(),
@@ -170,6 +182,8 @@ function resolveConflict(local, remote) {
 }
 
 async function syncStore(storeName, tableName) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Missing Supabase configuration");
+
   const { data: remoteRecords, error: fetchError } = await supabase.from(tableName).select("*");
   if (fetchError) throw fetchError;
 
