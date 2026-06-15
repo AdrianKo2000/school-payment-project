@@ -98,12 +98,12 @@ export default function AddStudentModal({
     const errs = {};
     if (!formData.name.trim()) errs.name = "Student name is required";
 
-    if (formData.phone && formData.phone.length < 9) {
+    if (formData.phone && formData.phone.length < 5) {
       errs.phone = "Enter a complete primary phone number";
     }
 
     // Optional phone2 length verification
-    if (formData.phone2 && formData.phone2.length < 9) {
+    if (formData.phone2 && formData.phone2.length < 5) {
       errs.phone2 = "Enter a complete secondary phone number";
     }
 

@@ -121,17 +121,23 @@ export async function getStudents(classKey = null) {
   );
 }
 
+// 4. Student CRUD
 export async function addStudent(studentData) {
+  const newId = generateUUID();
   const student = {
     status: "Unpaid",
     deleted: false,
     ...studentData,
-    id: generateUUID(),
+    id: newId,
+    // If it's a completely new student, profile_id matches its id. 
+    // If it's a rolled-over cycle, profile_id is carried forward.
+    profile_id: studentData.profile_id || newId, 
     last_updated: new Date().toISOString(),
   };
   await putRecord(STORE_STUDENTS, student);
   return student;
 }
+
 
 export async function updateStudent(id, changes) {
   const existing = await getRecord(STORE_STUDENTS, id);
@@ -154,21 +160,24 @@ export async function getPaymentHistory(studentId = null) {
   return filtered.sort((a, b) => b.archived_at.localeCompare(a.archived_at));
 }
 
+// 5. Payment History CRUD
 export async function archivePayment(historyData) {
   const record = {
     deleted: false,
     ...historyData,
     student_id: historyData.id,
     student_name: historyData.name,
+    // Fallback ensures backward compatibility for older entries pre-dating this fix
+    profile_id: historyData.profile_id || historyData.id, 
     id: generateUUID(),
     archived_at: new Date().toISOString(),
     last_updated: new Date().toISOString(),
   };
-
   delete record.is_copy; // Prevent schema clashes
   await putRecord(STORE_HISTORY, record);
   return record;
 }
+
 
 export async function deletePaymentHistoryRow(id) {
   const existing = await getRecord(STORE_HISTORY, id);

@@ -248,16 +248,23 @@ export default function App() {
         ...student,
         archived_at: new Date().toISOString(),
       });
+
       const nextStart = getNextWeekendStartDate(student.end_date);
       await syncService.addStudent({
-        ...student,
-        id: undefined,
+        name: student.name,
+        phone: student.phone,
+        phone2: student.phone2 || "", // Carry forward secondary contact information
+        class_key: student.class_key,
+        school_fee: student.school_fee,
+        book_fee: student.book_fee,
         start_date: nextStart,
         end_date: calculateEndDate(nextStart),
         tuition_paid: false,
         book_paid: false,
         is_copy: true,
+        profile_id: student.profile_id || student.id, // Hand over continuous identifier chain
       });
+
       await syncService.updateStudent(student.id, {
         tuition_paid: true,
         book_paid: true,
