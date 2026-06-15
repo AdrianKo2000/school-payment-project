@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   XCircle,
   Settings,
+  Search,
 } from "lucide-react";
 import Skeleton from "./components/Skeleton";
 
@@ -33,6 +34,46 @@ const calculateEndDate = (startDateStr) => {
     d.setDate(d.getDate() + 1);
   }
   return d.toISOString().split("T")[0];
+};
+
+// Levenshtein Distance Matrix for approximate typo-matching
+const getLevenshteinDistance = (a, b) => {
+  const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + 1,
+        );
+      }
+    }
+  }
+  return matrix[a.length][b.length];
+};
+
+// Shared Fuzzy Search match algorithm
+const isFuzzyMatch = (studentName, searchQuery) => {
+  if (!studentName) return false;
+
+  const cleanName = studentName.toLowerCase().trim();
+  const cleanQuery = searchQuery.toLowerCase().trim();
+
+  if (cleanName.includes(cleanQuery)) return true;
+  if (cleanQuery.length < 3) return false;
+
+  const nameTokens = cleanName.split(/\s+/);
+  for (const token of nameTokens) {
+    const distance = getLevenshteinDistance(token, cleanQuery);
+    const allowedTypos = cleanQuery.length <= 4 ? 1 : 2;
+    if (distance <= allowedTypos) return true;
+  }
+  return false;
 };
 
 export default function App() {
@@ -50,7 +91,9 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState(
     currentCalendarDate.getFullYear(),
   );
+
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [students, setStudents] = useState([]);
   const [paymentHistory, setPaymentHistory] = useState([]);
@@ -120,19 +163,15 @@ export default function App() {
     }
   }, [syncing, loadDatabase, showToast]);
 
-  const executeWithSync = async (dbOperation, successMessage, onError) => {
+  const executeWithSync = async (dbOperation, successMessage) => {
     try {
       await dbOperation();
       if (successMessage) showToast(successMessage);
       await loadDatabase();
       await triggerSync();
     } catch (err) {
-      if (onError) {
-        onError(err); // Run custom logic if provided
-      } else {
-        console.error("Operation failed:", err);
-        showToast("An error occurred.", "error");
-      }
+      console.error("Operation failed:", err);
+      showToast("An error occurred during the operation.", "error");
     }
   };
 
@@ -172,7 +211,7 @@ export default function App() {
     setConfirmModalConfig({
       isOpen: true,
       title: "Delete History Entry",
-      message: `Permanently remove payment log for ${record.student_name}?`,
+      message: `Permanently remove payment log for ${record.student_name || record.name}?`,
       onConfirm: () =>
         executeWithSync(
           () => syncService.deletePaymentHistoryRow(record.id),
@@ -200,10 +239,6 @@ export default function App() {
     executeWithSync(
       () => syncService.saveClasses(updatedClasses),
       "Class catalogue updated and synced to cloud!",
-      (err) => {
-        // Your custom error logic here
-        showToast("Failed to save classes. Check your connection.", "error");
-      },
     );
   };
 
@@ -274,13 +309,53 @@ export default function App() {
 
   const finalFilteredStudents = useMemo(() => {
     return baseFilteredStudents.filter((student) => {
-      if (paymentFilter === "all") return true;
-      const isFullyPaid =
-        student.tuition_paid &&
-        (student.book_paid || Number(student.book_fee || 0) === 0);
-      return paymentFilter === "paid" ? isFullyPaid : !isFullyPaid;
+      if (paymentFilter !== "all") {
+        const isFullyPaid =
+          student.tuition_paid &&
+          (student.book_paid || Number(student.book_fee || 0) === 0);
+        if (paymentFilter === "paid" && !isFullyPaid) return false;
+        if (paymentFilter === "unpaid" && isFullyPaid) return false;
+      }
+
+      if (searchQuery.trim() !== "") {
+        const matchName = isFuzzyMatch(student.name, searchQuery);
+        const matchPhone = student.phone
+          ?.toLowerCase()
+          .includes(searchQuery.toLowerCase().trim());
+        if (!matchName && !matchPhone) return false;
+      }
+
+      return true;
     });
-  }, [baseFilteredStudents, paymentFilter]);
+  }, [baseFilteredStudents, paymentFilter, searchQuery]);
+
+  // NEW: Filtering logic pipeline applied cleanly to paymentHistory store array
+  const filteredPaymentHistory = useMemo(() => {
+    return paymentHistory.filter((record) => {
+      // 1. Class Check
+      const matchClass =
+        selectedClass === "all" || record.class_key === selectedClass;
+
+      // 2. Cycle Date Context Check (checks registration period match)
+      const start = new Date(record.start_date);
+      const matchDate =
+        selectedMonth === start.getMonth() &&
+        selectedYear === start.getFullYear();
+
+      // 3. Typo-tolerant Fuzzy Search check
+      let matchSearch = true;
+      if (searchQuery.trim() !== "") {
+        const targetName = record.student_name || record.name || "";
+        const matchName = isFuzzyMatch(targetName, searchQuery);
+        const matchPhone = record.phone
+          ?.toLowerCase()
+          .includes(searchQuery.toLowerCase().trim());
+        matchSearch = matchName || matchPhone;
+      }
+
+      return matchClass && matchDate && matchSearch;
+    });
+  }, [paymentHistory, selectedClass, selectedMonth, selectedYear, searchQuery]);
 
   const activeClassName = useMemo(() => {
     if (selectedClass === "all") return "All Students";
@@ -349,6 +424,7 @@ export default function App() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* GLOBAL HEADER: Holds global persistent filter parameters */}
         <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-20 shrink-0">
           <div className="flex items-center gap-4 relative">
             <button
@@ -417,6 +493,21 @@ export default function App() {
             )}
           </div>
 
+          {/* NEW: Globalized Input Box inside header layout strip */}
+          <div className="relative flex-1 max-w-xs mx-4 hidden sm:block">
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              type="text"
+              placeholder="Fuzzy search name or phone..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl text-xs font-semibold text-slate-700 transition-all focus:outline-none"
+            />
+          </div>
+
           <div className="flex items-center gap-3">
             <button
               onClick={triggerSync}
@@ -446,7 +537,22 @@ export default function App() {
         <main className="flex-1 overflow-auto bg-slate-50/60 flex flex-col">
           {currentView === "tracking" && (
             <div className="p-6 pb-0 flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-2 pl-4 rounded-2xl border border-slate-200 shadow-sm">
+              {/* Responsive fallback for mobile search input configuration */}
+              <div className="relative w-full sm:hidden">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Fuzzy search name or phone..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-3 px-4 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex items-center gap-6">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-slate-100 rounded-lg text-slate-500">
@@ -491,12 +597,12 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex bg-slate-100 p-1 rounded-xl">
+                <div className="flex bg-slate-100 p-1 rounded-xl w-full xl:w-auto">
                   {["all", "paid", "unpaid"].map((f) => (
                     <button
                       key={f}
                       onClick={() => setPaymentFilter(f)}
-                      className={`px-4 py-1.5 text-xs font-bold rounded-lg capitalize transition-all ${paymentFilter === f ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"}`}
+                      className={`flex-1 xl:flex-none px-4 py-1.5 text-xs font-bold rounded-lg capitalize transition-all ${paymentFilter === f ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"}`}
                     >
                       {f}
                     </button>
@@ -518,10 +624,30 @@ export default function App() {
           )}
 
           {currentView === "history" && (
-            <PaymentHistoryView
-              history={paymentHistory}
-              onDeleteHistoryRow={handleDeleteHistoryRow}
-            />
+            <div className="flex flex-col flex-1">
+              {/* Responsive fallback for mobile search input configuration inside history */}
+              <div className="p-6 pb-0 sm:hidden">
+                <div className="relative w-full">
+                  <Search
+                    size={14}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Fuzzy search name or phone..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Passing the newly structured dataset stream component prop directly */}
+              <PaymentHistoryView
+                history={filteredPaymentHistory}
+                onDeleteHistoryRow={handleDeleteHistoryRow}
+              />
+            </div>
           )}
 
           {currentView === "settings" && (
