@@ -4,9 +4,8 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { CLASS_CATALOGUE as DEFAULT_CLASSES } from "./utils/constants"; // Fallback default classes
+import { CLASS_CATALOGUE as DEFAULT_CLASSES } from "./utils/constants";
 
-// 1. Supabase Initialization (Environment Safe - Hardcoded credentials removed)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -16,8 +15,6 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   );
 }
 
-// Dummy fallbacks are provided to prevent createClient from throwing a fatal error on app load
-// if the .env file is temporarily missing. The local IndexedDB will still function normally.
 export const supabase = createClient(
   SUPABASE_URL || "https://YOUR_PROJECT.supabase.co",
   SUPABASE_ANON_KEY || "YOUR_ANON_KEY",
@@ -26,12 +23,12 @@ export const supabase = createClient(
   },
 );
 
-// 2. IndexedDB Configuration (Bumped version to 3 to force schema upgrade)
+// BUMPED VERSION TO 4: Upgrading schema to support row-level class syncing
 const DB_NAME = "school_payment_tracker";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORE_STUDENTS = "students";
 const STORE_HISTORY = "payment_history";
-const STORE_SETTINGS = "settings"; // NEW: Store for dynamic configurations
+const STORE_CLASSES = "classes"; // NEW: Granular store for classes
 
 export function openDB() {
   return new Promise((resolve, reject) => {
@@ -46,6 +43,7 @@ export function openDB() {
         });
         studentStore.createIndex("class_key", "class_key", { unique: false });
         studentStore.createIndex("status", "status", { unique: false });
+        studentStore.createIndex("profile_id", "profile_id", { unique: false });
         studentStore.createIndex("last_updated", "last_updated", {
           unique: false,
         });
@@ -61,9 +59,9 @@ export function openDB() {
         });
       }
 
-      // NEW: Create Settings Store if it doesn't exist
-      if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
-        db.createObjectStore(STORE_SETTINGS, { keyPath: "id" });
+      // NEW: Create independent Classes Store
+      if (!db.objectStoreNames.contains(STORE_CLASSES)) {
+        db.createObjectStore(STORE_CLASSES, { keyPath: "id" });
       }
     };
 
@@ -72,7 +70,7 @@ export function openDB() {
   });
 }
 
-// 3. Database Helpers
+// Database Helpers
 async function getAllRecords(storeName) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -95,7 +93,10 @@ async function getRecord(storeName, id) {
 
 async function putRecord(storeName, record) {
   const db = await openDB();
-  const stamped = { ...record, last_updated: new Date().toISOString() };
+  const stamped = {
+    ...record,
+    last_updated: record.last_updated || new Date().toISOString(),
+  };
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, "readwrite");
     const req = tx.objectStore(storeName).put(stamped);
@@ -113,7 +114,7 @@ export function generateUUID() {
   });
 }
 
-// 4. Student CRUD
+// --- STUDENT CRUD ---
 export async function getStudents(classKey = null) {
   const all = await getAllRecords(STORE_STUDENTS);
   return all.filter(
@@ -121,7 +122,6 @@ export async function getStudents(classKey = null) {
   );
 }
 
-// 4. Student CRUD
 export async function addStudent(studentData) {
   const newId = generateUUID();
   const student = {
@@ -129,20 +129,21 @@ export async function addStudent(studentData) {
     deleted: false,
     ...studentData,
     id: newId,
-    // If it's a completely new student, profile_id matches its id. 
-    // If it's a rolled-over cycle, profile_id is carried forward.
-    profile_id: studentData.profile_id || newId, 
+    profile_id: studentData.profile_id || newId,
     last_updated: new Date().toISOString(),
   };
   await putRecord(STORE_STUDENTS, student);
   return student;
 }
 
-
 export async function updateStudent(id, changes) {
   const existing = await getRecord(STORE_STUDENTS, id);
   if (!existing) throw new Error(`Student ${id} not found locally.`);
-  const updated = { ...existing, ...changes };
+  const updated = {
+    ...existing,
+    ...changes,
+    last_updated: new Date().toISOString(),
+  };
   await putRecord(STORE_STUDENTS, updated);
   return updated;
 }
@@ -151,7 +152,7 @@ export async function deleteStudent(id) {
   await updateStudent(id, { deleted: true });
 }
 
-// 5. Payment History CRUD
+// --- PAYMENT HISTORY CRUD ---
 export async function getPaymentHistory(studentId = null) {
   const all = await getAllRecords(STORE_HISTORY);
   const filtered = all.filter(
@@ -160,24 +161,22 @@ export async function getPaymentHistory(studentId = null) {
   return filtered.sort((a, b) => b.archived_at.localeCompare(a.archived_at));
 }
 
-// 5. Payment History CRUD
 export async function archivePayment(historyData) {
   const record = {
     deleted: false,
     ...historyData,
     student_id: historyData.id,
     student_name: historyData.name,
-    // Fallback ensures backward compatibility for older entries pre-dating this fix
-    profile_id: historyData.profile_id || historyData.id, 
+    profile_id: historyData.profile_id || historyData.id,
     id: generateUUID(),
     archived_at: new Date().toISOString(),
     last_updated: new Date().toISOString(),
   };
-  delete record.is_copy; // Prevent schema clashes
+
+  delete record.is_copy;
   await putRecord(STORE_HISTORY, record);
   return record;
 }
-
 
 export async function deletePaymentHistoryRow(id) {
   const existing = await getRecord(STORE_HISTORY, id);
@@ -210,27 +209,65 @@ export async function clearAllPaymentHistory() {
   });
 }
 
-// 6. NEW: Settings & Dynamic Classes Configuration
+// --- NEW: GRANULAR CLASSES CRUD ---
 export async function getClasses() {
-  const record = await getRecord(STORE_SETTINGS, "class_catalogue");
-  if (record && record.data) return record.data;
+  const all = await getAllRecords(STORE_CLASSES);
+  const active = all.filter((c) => !c.deleted);
 
-  // Initialize with fallback catalog defaults if empty
-  await saveClasses(DEFAULT_CLASSES);
+  if (active.length > 0) return active;
+
+  // Initialize with fallback catalog defaults if DB is completely empty
+  const timestamp = new Date().toISOString();
+  for (const cls of DEFAULT_CLASSES) {
+    await putRecord(STORE_CLASSES, {
+      ...cls,
+      deleted: false,
+      last_updated: timestamp,
+    });
+  }
   return DEFAULT_CLASSES;
 }
 
-export async function saveClasses(classesArray) {
-  const record = {
-    id: "class_catalogue",
-    data: classesArray,
-    last_updated: new Date().toISOString(),
-  };
-  await putRecord(STORE_SETTINGS, record);
-  return record;
+// The diffing engine: Updates individual rows instead of smashing a JSON blob
+export async function saveClasses(newClassesArray) {
+  const existing = await getAllRecords(STORE_CLASSES);
+  const newIds = new Set(newClassesArray.map((c) => c.id));
+  const timestamp = new Date().toISOString();
+
+  // 1. Add new classes or update modified ones
+  for (const cls of newClassesArray) {
+    const ex = existing.find((c) => c.id === cls.id);
+    // Only flag as updated if the name or category actually changed
+    if (
+      !ex ||
+      ex.name !== cls.name ||
+      ex.category !== cls.category ||
+      ex.deleted
+    ) {
+      await putRecord(STORE_CLASSES, {
+        ...ex,
+        ...cls,
+        deleted: false,
+        last_updated: timestamp,
+      });
+    }
+  }
+
+  // 2. Soft-delete any classes that were removed from the frontend array
+  for (const ex of existing) {
+    if (!newIds.has(ex.id) && !ex.deleted) {
+      await putRecord(STORE_CLASSES, {
+        ...ex,
+        deleted: true,
+        last_updated: timestamp,
+      });
+    }
+  }
+
+  return await getClasses();
 }
 
-// 7. Cloud Sync Core
+// --- CLOUD SYNC CORE ---
 function resolveConflict(local, remote) {
   if (!local) return { winner: remote, source: "remote" };
   if (!remote) return { winner: local, source: "local" };
@@ -286,10 +323,11 @@ async function syncStore(storeName, tableName) {
 }
 
 export async function syncWithCloud() {
-  const [students, history, settings] = await Promise.all([
+  // Syncing the 3 tables granularly!
+  const [students, history, classes] = await Promise.all([
     syncStore(STORE_STUDENTS, "students"),
     syncStore(STORE_HISTORY, "payment_history"),
-    syncStore(STORE_SETTINGS, "settings"), // <-- NEW: This syncs your classes!
+    syncStore(STORE_CLASSES, "classes"),
   ]);
 
   const result = { success: true, timestamp: new Date().toISOString() };
@@ -297,16 +335,18 @@ export async function syncWithCloud() {
   return result;
 }
 
-// 8. Clean JSON Backup
+// --- JSON BACKUP ---
 export async function exportToJSON() {
-  const [allStudents, allHistory] = await Promise.all([
+  const [allStudents, allHistory, allClasses] = await Promise.all([
     getAllRecords(STORE_STUDENTS),
     getAllRecords(STORE_HISTORY),
+    getAllRecords(STORE_CLASSES),
   ]);
 
   const payload = {
-    export_version: 1,
+    export_version: 2, // Bumped version
     exported_at: new Date().toISOString(),
+    classes: allClasses.filter((c) => !c.deleted), // Added Classes to backup!
     students: allStudents.filter((s) => !s.deleted),
     payment_history: allHistory.filter((h) => !h.deleted),
   };

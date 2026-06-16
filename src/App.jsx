@@ -85,12 +85,20 @@ export default function App() {
   const [selectedClass, setSelectedClass] = useState(
     () => localStorage.getItem("academy_active_class_tab") || "all",
   );
-  const [selectedMonth, setSelectedMonth] = useState(
-    currentCalendarDate.getMonth(),
-  );
-  const [selectedYear, setSelectedYear] = useState(
-    currentCalendarDate.getFullYear(),
-  );
+
+  // FIX: Month and Year persistence hydration from localStorage
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const savedMonth = localStorage.getItem("academy_active_month_filter");
+    return savedMonth !== null
+      ? Number(savedMonth)
+      : currentCalendarDate.getMonth();
+  });
+  const [selectedYear, setSelectedYear] = useState(() => {
+    const savedYear = localStorage.getItem("academy_active_year_filter");
+    return savedYear !== null
+      ? Number(savedYear)
+      : currentCalendarDate.getFullYear();
+  });
 
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -125,6 +133,16 @@ export default function App() {
   useEffect(
     () => localStorage.setItem("academy_active_class_tab", selectedClass),
     [selectedClass],
+  );
+
+  // FIX: Synchronization of Month and Year states to local storage mirrors
+  useEffect(
+    () => localStorage.setItem("academy_active_month_filter", selectedMonth),
+    [selectedMonth],
+  );
+  useEffect(
+    () => localStorage.setItem("academy_active_year_filter", selectedYear),
+    [selectedYear],
   );
 
   const loadDatabase = useCallback(async () => {
@@ -246,14 +264,15 @@ export default function App() {
     executeWithSync(async () => {
       await syncService.archivePayment({
         ...student,
+        tuition_paid: true,
+        book_paid: true,
         archived_at: new Date().toISOString(),
       });
-
       const nextStart = getNextWeekendStartDate(student.end_date);
       await syncService.addStudent({
         name: student.name,
         phone: student.phone,
-        phone2: student.phone2 || "", // Carry forward secondary contact information
+        phone2: student.phone2 || "",
         class_key: student.class_key,
         school_fee: student.school_fee,
         book_fee: student.book_fee,
@@ -262,9 +281,8 @@ export default function App() {
         tuition_paid: false,
         book_paid: false,
         is_copy: true,
-        profile_id: student.profile_id || student.id, // Hand over continuous identifier chain
+        profile_id: student.profile_id || student.id, // Continuous Identity Preservation Fix
       });
-
       await syncService.updateStudent(student.id, {
         tuition_paid: true,
         book_paid: true,
@@ -273,21 +291,25 @@ export default function App() {
   };
 
   const handlePayTuition = (student) => {
+    if (student.tuition_paid) return;
+
     if (student.book_paid || Number(student.book_fee || 0) === 0)
       completeFullPaymentCycle(student);
     else
       executeWithSync(
         () => syncService.updateStudent(student.id, { tuition_paid: true }),
-        `Tuition cleared for ${student.name}. Book fee outstanding.`,
+        `School Fee cleared for ${student.name}. Book fee still outstanding.`,
       );
   };
 
   const handlePayBook = (student) => {
+    if (student.book_paid) return;
+
     if (student.tuition_paid) completeFullPaymentCycle(student);
     else
       executeWithSync(
         () => syncService.updateStudent(student.id, { book_paid: true }),
-        `Book fee cleared for ${student.name}. Tuition outstanding.`,
+        `Book fee cleared for ${student.name}. School Fee still outstanding.`,
       );
   };
 
@@ -329,27 +351,26 @@ export default function App() {
         const matchPhone = student.phone
           ?.toLowerCase()
           .includes(searchQuery.toLowerCase().trim());
-        if (!matchName && !matchPhone) return false;
+        const matchPhone2 = student.phone2
+          ?.toLowerCase()
+          .includes(searchQuery.toLowerCase().trim());
+        if (!matchName && !matchPhone && !matchPhone2) return false;
       }
 
       return true;
     });
   }, [baseFilteredStudents, paymentFilter, searchQuery]);
 
-  // NEW: Filtering logic pipeline applied cleanly to paymentHistory store array
   const filteredPaymentHistory = useMemo(() => {
     return paymentHistory.filter((record) => {
-      // 1. Class Check
       const matchClass =
         selectedClass === "all" || record.class_key === selectedClass;
 
-      // 2. Cycle Date Context Check (checks registration period match)
       const start = new Date(record.start_date);
       const matchDate =
         selectedMonth === start.getMonth() &&
         selectedYear === start.getFullYear();
 
-      // 3. Typo-tolerant Fuzzy Search check
       let matchSearch = true;
       if (searchQuery.trim() !== "") {
         const targetName = record.student_name || record.name || "";
@@ -357,7 +378,10 @@ export default function App() {
         const matchPhone = record.phone
           ?.toLowerCase()
           .includes(searchQuery.toLowerCase().trim());
-        matchSearch = matchName || matchPhone;
+        const matchPhone2 = record.phone2
+          ?.toLowerCase()
+          .includes(searchQuery.toLowerCase().trim());
+        matchSearch = matchName || matchPhone || matchPhone2;
       }
 
       return matchClass && matchDate && matchSearch;
@@ -431,7 +455,6 @@ export default function App() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* GLOBAL HEADER: Holds global persistent filter parameters */}
         <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-20 shrink-0">
           <div className="flex items-center gap-4 relative">
             <button
@@ -500,7 +523,6 @@ export default function App() {
             )}
           </div>
 
-          {/* NEW: Globalized Input Box inside header layout strip */}
           <div className="relative flex-1 max-w-xs mx-4 hidden sm:block">
             <Search
               size={14}
@@ -544,7 +566,6 @@ export default function App() {
         <main className="flex-1 overflow-auto bg-slate-50/60 flex flex-col">
           {currentView === "tracking" && (
             <div className="p-6 pb-0 flex flex-col gap-4">
-              {/* Responsive fallback for mobile search input configuration */}
               <div className="relative w-full sm:hidden">
                 <Search
                   size={14}
@@ -619,6 +640,7 @@ export default function App() {
 
               <StudentTable
                 students={finalFilteredStudents}
+                classes={dynamicClasses}
                 onPayTuition={handlePayTuition}
                 onPayBook={handlePayBook}
                 onEditStudent={(s) => {
@@ -632,7 +654,6 @@ export default function App() {
 
           {currentView === "history" && (
             <div className="flex flex-col flex-1">
-              {/* Responsive fallback for mobile search input configuration inside history */}
               <div className="p-6 pb-0 sm:hidden">
                 <div className="relative w-full">
                   <Search
@@ -649,9 +670,9 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Passing the newly structured dataset stream component prop directly */}
               <PaymentHistoryView
                 history={filteredPaymentHistory}
+                classes={dynamicClasses}
                 onDeleteHistoryRow={handleDeleteHistoryRow}
               />
             </div>

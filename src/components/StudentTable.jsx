@@ -1,140 +1,128 @@
 import React from "react";
-import { CheckCircle2, XCircle, Edit2, Trash2 } from "lucide-react";
+import { Phone, CalendarRange, Edit, Trash2, CheckCircle2, Circle, GraduationCap } from "lucide-react";
 
-const formatCurrency = (amount) => {
-  const numericAmount = Number(amount || 0);
-  return `${numericAmount.toLocaleString()} Ks`;
-};
+export default function StudentTable({ students, classes = [], onPayTuition, onPayBook, onEditStudent, onDeleteStudent }) {
+  
+  const getClassName = (classKey) => {
+    const cls = classes.find((c) => c.id === classKey);
+    return cls ? cls.name : classKey;
+  };
 
-export default function StudentTable({
-  students,
-  onPayTuition,
-  onPayBook,
-  onEditStudent,
-  onDeleteStudent,
-}) {
+  const formatDateRange = (startStr, endStr) => {
+    if (!startStr || !endStr) return "";
+    const start = new Date(startStr).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const end = new Date(endStr).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return `${start} — ${end}`;
+  };
+
+  if (!students || students.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex-1 flex flex-col items-center justify-center p-12 text-center">
+        <h3 className="text-sm font-bold text-slate-800">No Students Found</h3>
+        <p className="text-xs text-slate-500 mt-1">Try adjusting your filters or search query.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex-1 flex flex-col">
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="w-full text-left border-collapse whitespace-nowrap">
           <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              <th className="px-6 py-3.5">Student Information</th>
-              <th className="px-6 py-3.5">Registration Period</th>
-              <th className="px-6 py-3.5">School Fee Status</th>
-              <th className="px-6 py-3.5">Book Fee Status</th>
-              <th className="px-6 py-3.5 text-right">Actions</th>
+            <tr className="bg-slate-50 border-b border-slate-100 text-xs font-bold text-slate-500 uppercase tracking-wider">
+              <th className="p-4 pl-6">Student Name</th>
+              <th className="p-4">Class</th>
+              <th className="p-4">Term Cycle</th>
+              <th className="p-4">Payment Actions</th>
+              <th className="p-4 pr-6 text-right">Settings</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-sm">
-            {students.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={5}
-                  className="px-6 py-12 text-center text-slate-400 font-medium"
-                >
-                  No active student records matched for this class filtering
-                  window.
-                </td>
-              </tr>
-            ) : (
-              students.map((student) => {
-                const isFullyPaid = student.tuition_paid && student.book_paid;
+          <tbody className="divide-y divide-slate-100">
+            {students.map((student) => {
+              const bookFeeNum = Number(student.book_fee || 0);
+              const tuitionFeeNum = Number(student.school_fee || 0);
+              
+              const isTuitionPaid = student.tuition_paid;
+              const isBookPaid = student.book_paid;
 
-                return (
-                  <tr
-                    key={student.id}
-                    className={`hover:bg-slate-50/80 transition-colors ${isFullyPaid ? "bg-emerald-50/20" : ""}`}
-                  >
-                    <td className="px-6 py-4">
-                      <div className="font-bold text-slate-900">
-                        {student.name}
-                      </div>
-                      {/* UPDATED: Now displays both phone numbers if phone2 exists */}
-                      <div className="text-xs text-slate-500 font-medium mt-0.5 flex items-center flex-wrap gap-1">
-                        <span>{student.phone || "No phone"}</span>
-                        {student.phone2 && (
-                          <>
-                            <span className="text-slate-300">•</span>
-                            <span>{student.phone2}</span>
-                          </>
-                        )}
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4 text-xs font-semibold text-slate-600">
-                      <div>Start: {student.start_date}</div>
-                      <div className="mt-0.5 text-slate-400">
-                        End: {student.end_date}
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`text-xs font-bold px-2 py-1 rounded-md ${student.tuition_paid ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
-                        >
-                          {formatCurrency(student.school_fee)}
+              return (
+                <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="p-4 pl-6">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-bold text-slate-800">{student.name}</span>
+                      {student.phone && (
+                        <span className="flex items-center gap-1 mt-1 text-xs text-slate-500">
+                          <Phone size={10} /> {student.phone}
                         </span>
-                        <button
-                          onClick={() => onPayTuition(student)}
-                          disabled={student.tuition_paid}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${student.tuition_paid ? "text-emerald-600 bg-emerald-50/50 cursor-default" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95"}`}
-                        >
-                          {student.tuition_paid ? (
-                            <CheckCircle2 size={14} />
-                          ) : (
-                            <XCircle size={14} className="text-slate-400" />
-                          )}
-                          {student.tuition_paid ? "Paid" : "Mark Paid"}
-                        </button>
-                      </div>
-                    </td>
+                      )}
+                    </div>
+                  </td>
+                  
+                  <td className="p-4">
+                    <div className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                      <GraduationCap size={14} className="text-slate-400" />
+                      {getClassName(student.class_key)}
+                    </div>
+                  </td>
 
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`text-xs font-bold px-2 py-1 rounded-md ${student.book_paid ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}
-                        >
-                          {formatCurrency(student.book_fee)}
-                        </span>
-                        <button
-                          onClick={() => onPayBook(student)}
-                          disabled={student.book_paid}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${student.book_paid ? "text-emerald-600 bg-emerald-50/50 cursor-default" : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95"}`}
-                        >
-                          {student.book_paid ? (
-                            <CheckCircle2 size={14} />
-                          ) : (
-                            <XCircle size={14} className="text-slate-400" />
-                          )}
-                          {student.book_paid ? "Paid" : "Mark Paid"}
-                        </button>
-                      </div>
-                    </td>
+                  <td className="p-4">
+                    <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                      <CalendarRange size={14} className="text-slate-400" />
+                      {formatDateRange(student.start_date, student.end_date)}
+                    </span>
+                  </td>
 
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => onEditStudent(student)}
-                          className="p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                          title="Edit Student Profile"
-                        >
-                          <Edit2 size={15} />
-                        </button>
-                        <button
-                          onClick={() => onDeleteStudent(student)}
-                          className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                          title="Delete Student"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
+                  <td className="p-4">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => !isTuitionPaid && onPayTuition(student)}
+                        disabled={isTuitionPaid}
+                        className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all border ${
+                          isTuitionPaid 
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200 cursor-not-allowed opacity-70" 
+                            : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50 cursor-pointer"
+                        }`}
+                      >
+                        {isTuitionPaid ? <CheckCircle2 size={14} /> : <Circle size={14} className="text-slate-300" />}
+                        School Fee (${tuitionFeeNum})
+                      </button>
+
+                      <button
+                        onClick={() => !isBookPaid && onPayBook(student)}
+                        disabled={isBookPaid}
+                        className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg transition-all border ${
+                          isBookPaid 
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200 cursor-not-allowed opacity-70" 
+                            : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50 cursor-pointer"
+                        }`}
+                      >
+                        {isBookPaid ? <CheckCircle2 size={14} /> : <Circle size={14} className="text-slate-300" />}
+                        Material (${bookFeeNum})
+                      </button>
+                    </div>
+                  </td>
+
+                  <td className="p-4 pr-6 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => onEditStudent(student)}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="Edit Student"
+                      >
+                        <Edit size={16} />
+                      </button>
+                      <button
+                        onClick={() => onDeleteStudent(student)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        title="Delete Student"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
